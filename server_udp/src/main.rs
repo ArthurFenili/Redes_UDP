@@ -31,13 +31,18 @@ fn main() -> std::io::Result<()> {
 
             match File::open(filename) {
                 Ok(mut file) => {
-                    // Buffer para armazenar o conteúdo do arquivo
-                    let mut file_content = Vec::new();
-                    // Lê o conteúdo do arquivo para o buffer
-                    file.read_to_end(&mut file_content)?;
-
-                    // Envia o conteúdo do arquivo para o cliente
-                    socket.send_to(&file_content, &src)?;
+                    loop {
+                        // Buffer para armazenar o conteúdo do arquivo em pedaços
+                        let mut buffer = [0; 1024];
+                        let bytes_read = file.read(&mut buffer)?;
+        
+                        if bytes_read == 0 {
+                            break; // Fim do arquivo
+                        }
+        
+                        // Envia o pedaço do arquivo para o cliente
+                        socket.send_to(&buffer[..bytes_read], &src)?;
+                    }
                 }
                 Err(_) => {
                     // Arquivo não encontrado, envia uma resposta de erro para o cliente
