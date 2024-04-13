@@ -47,6 +47,7 @@ fn main() -> io::Result<()> {
     // Buffer para armazenar os dados recebidos do servidor
     let mut received_data = Vec::new();
     let mut last_packet :u32 = 0;
+    let mut resended = false;
     // Loop para receber os pacotes do servidor
     loop {
         // Buffer para armazenar os dados do pacote recebido
@@ -59,13 +60,35 @@ fn main() -> io::Result<()> {
                     break;
                 }
                 let packet: Packet = bincode::deserialize(&buffer[..amt]).unwrap();
+                println!("Pacote {} recebido", packet.sequence_number);
+                resended = false;
                 let mut response = [0; 4];
-                response.copy_from_slice(&packet.sequence_number.to_be_bytes());
                 if packet.sequence_number != 0 && packet.sequence_number != last_packet + 1 {
+                    response.copy_from_slice(&(last_packet + 1).to_be_bytes());
                     socket.send_to(&response, &server_addr);
+                    // Espere até que o servidor reenvie o pacote
+                    loop {
+                        let mut new_buffer = [0; 10000];
+                        match socket.recv_from(&mut new_buffer) {
+                            Ok((amt, _)) => {
+                                let new_packet: Packet = bincode::deserialize(&new_buffer[..amt]).unwrap();
+                                println!("Pacote {} recebido NOVAMENTE", new_packet.sequence_number);
+                                received_data.extend_from_slice(&new_packet.data);
+                                last_packet = new_packet.sequence_number;
+                                resended = true;
+                                if new_packet.sequence_number == packet.sequence_number {
+                                    break;
+                                }
+                            }
+                            Err(_) => continue, // Ignore errors and keep waiting
+                        }
+                    }
                 }
-                received_data.extend_from_slice(&packet.data);
-                last_packet = packet.sequence_number;
+                if resended == false {
+                    received_data.extend_from_slice(&packet.data);
+                    last_packet = packet.sequence_number;
+                }
+                
             }
             Err(err) => {
                 // Se for um timeout, saia do loop

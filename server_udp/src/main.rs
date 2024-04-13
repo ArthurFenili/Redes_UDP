@@ -1,5 +1,5 @@
 use std::net::{UdpSocket, SocketAddr};
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::fs::File;
 use serde::{Serialize, Deserialize};
 use std::time::{Duration, Instant};
@@ -15,8 +15,6 @@ impl Packet {
         Packet { sequence_number, data }
     }
 }
-
-
 
 fn main() -> std::io::Result<()> {
     // configuração do endereço de ip e da porta
@@ -42,7 +40,7 @@ fn main() -> std::io::Result<()> {
         let received = std::str::from_utf8(&buf[..amt]).expect("Erro ao converter bytes para string");
         println!("Mensagem recebida: {}", received);
 
-        if received.starts_with("GET /") {
+        if received.starts_with("GET /") || received.starts_with("TEG /") {
             let filename = received.split_whitespace().nth(1).unwrap_or("").strip_prefix("/").unwrap_or("");
 
             // cria o buffer do pacote a ser enviado
@@ -61,29 +59,52 @@ fn main() -> std::io::Result<()> {
                         // cria e envia um pacote com o numero do pacote e os dados
                         let packet = Packet::new(number, buffer[..bytes_read].to_vec());
                         let serialized_packet = bincode::serialize(&packet).unwrap();
-                        socket.send_to(&serialized_packet, &src);
+                        if received.starts_with("TEG /") {
+                            if number != 4 && number != 27 {
+                                socket.send_to(&serialized_packet, &src);
+                            }
+                            else {
+                                number += 1;
+                                continue;
+                            }
+                        }
+                        else {
+                            socket.send_to(&serialized_packet, &src); 
+                        }
 
                         socket.set_read_timeout(Some(Duration::from_millis(1)))?;
                         let mut client_response = [0; 4];
-                        match socket.recv_from(&mut client_response) {
-                            Ok((amt, _)) => {
-                                //reenvia pacote
-                            }
-                            Err(err) => {
-                                // Se for um timeout, saia do loop
-                                if let Some(io_err) = err.raw_os_error() {
-                                    if io_err == 10060 {
-                                        println!("Pacote recebido com sucesso... Iniciando transferência do próximo");
-                                        continue;
+                        // espera uma possivel resposta do client, se recebeu significa que um pacote não chegou, então reenvia
+                        // se não recebeu, inicia transferencia do proximo pacote
+                        loop {
+                            match socket.recv_from(&mut client_response) {
+                                Ok((amt, _)) => {
+                                    let response = u32::from_be_bytes(client_response[..amt]
+                                        .try_into()
+                                        .expect("Erro ao converter bytes para u32"));
+                                    
+                                    file.seek(SeekFrom::Start((response*4096).into()))?;
+                                    println!("Resposta recebida, pacote {} faltando. Reenviando...", response);
+                                    number = response;
+                                    let bytes_read = file.read(&mut buffer)?;
+                                    let packet = Packet::new(number, buffer[..bytes_read].to_vec());
+                                    let serialized_packet = bincode::serialize(&packet).unwrap();
+                                    socket.send_to(&serialized_packet, &src)?; 
+                                    number += 1;
+                                    break;
+                                    
+                                }
+                                Err(err) => {
+                                    if let Some(io_err) = err.raw_os_error() {
+                                        if io_err == 10060 {
+                                            println!("Pacote {} recebido com sucesso... Iniciando transferência do próximo", number);
+                                            number += 1;
+                                            break;
+                                        }
                                     }
                                 }
-                                // Se não for um timeout, exiba o erro e continue
-                                eprintln!("Erro ao receber dados: {}", err);
                             }
                         }
-        
-
-                        number += 1;
                     }
                 }
                 Err(_) => {
