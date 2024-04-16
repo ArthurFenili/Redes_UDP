@@ -1,12 +1,23 @@
 use std::net::UdpSocket;
 use std::io::{self, Write};
 use serde::{Serialize, Deserialize};
+use crc32fast::Hasher;
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Packet<'a> {
+struct Packet {    
     sequence_number: u32,
-    data: &'a [u8], // Alterado para um slice
+    data: Vec<u8>,
+    checksum: u32,
 }
+
+impl Packet {
+    fn calculate_checksum(&mut self) -> u32 {
+        let mut hasher = Hasher::new();
+        hasher.update(&self.data);
+        hasher.finalize()
+    }
+}
+
 fn main() -> io::Result<()> {
     // Configuração do endereço IP e porta do servidor
     let server_ip = "192.168.1.8"; // Altere para o IP do servidor
@@ -59,9 +70,11 @@ fn main() -> io::Result<()> {
                 if amt == 0 {
                     break;
                 }
-                let packet: Packet = bincode::deserialize(&buffer[..amt]).unwrap();
+                let mut packet: Packet = bincode::deserialize(&buffer[..amt]).unwrap();
                 println!("Pacote {} recebido", packet.sequence_number);
                 resended = false;
+
+                // verifica se os pacotes chegaram na ordem certa
                 let mut response = [0; 4];
                 if packet.sequence_number != 0 && packet.sequence_number != last_packet + 1 {
                     response.copy_from_slice(&(last_packet + 1).to_be_bytes());
@@ -71,7 +84,7 @@ fn main() -> io::Result<()> {
                         let mut new_buffer = [0; 10000];
                         match socket.recv_from(&mut new_buffer) {
                             Ok((amt, _)) => {
-                                let new_packet: Packet = bincode::deserialize(&new_buffer[..amt]).unwrap();
+                                let mut new_packet: Packet = bincode::deserialize(&new_buffer[..amt]).unwrap();
                                 println!("Pacote {} recebido NOVAMENTE", new_packet.sequence_number);
                                 received_data.extend_from_slice(&new_packet.data);
                                 last_packet = new_packet.sequence_number;
@@ -80,11 +93,38 @@ fn main() -> io::Result<()> {
                                     break;
                                 }
                             }
-                            Err(_) => continue, // Ignore errors and keep waiting
+                            Err(_) => continue,
                         }
                     }
                 }
+
+                // verifica se o pacote não veio corrompido
+                let mut response = [0; 4];
+                let checksum = packet.calculate_checksum();
+                if checksum != packet.checksum {
+                    response.copy_from_slice(&(packet.sequence_number).to_be_bytes());
+                    socket.send_to(&response, &server_addr);
+                    // Espere até que o servidor reenvie o pacote
+                    loop {
+                        let mut new_buffer = [0; 10000];
+                        match socket.recv_from(&mut new_buffer) {
+                            Ok((amt, _)) => {
+                                let mut new_packet: Packet = bincode::deserialize(&new_buffer[..amt]).unwrap();
+                                println!("Pacote {} recebido NOVAMENTE", new_packet.sequence_number);
+                                received_data.extend_from_slice(&new_packet.data);
+                                last_packet = new_packet.sequence_number;
+                                resended = true;
+                                if new_packet.sequence_number == packet.sequence_number {
+                                    break;
+                                }
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                }
+
                 if resended == false {
+                    //println!("checksum: {}", packet.checksum);
                     received_data.extend_from_slice(&packet.data);
                     last_packet = packet.sequence_number;
                 }

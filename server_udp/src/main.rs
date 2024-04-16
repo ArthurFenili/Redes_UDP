@@ -3,16 +3,24 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::fs::File;
 use serde::{Serialize, Deserialize};
 use std::time::{Duration, Instant};
+use crc32fast::Hasher;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Packet {    
     sequence_number: u32,
     data: Vec<u8>,
+    checksum: u32,
 }
 
 impl Packet {
-    fn new(sequence_number: u32, data: Vec<u8>) -> Self {
-        Packet { sequence_number, data }
+    fn new(sequence_number: u32, data: Vec<u8>, checksum: u32) -> Self {
+        Packet { sequence_number, data, checksum }
+    }
+
+    fn calculate_checksum(&mut self) {
+        let mut hasher = Hasher::new();
+        hasher.update(&self.data);
+        self.checksum = hasher.finalize();
     }
 }
 
@@ -55,12 +63,19 @@ fn main() -> std::io::Result<()> {
                             socket.set_read_timeout(None);
                             break;
                         }
-
+                        
                         // cria e envia um pacote com o numero do pacote e os dados
-                        let packet = Packet::new(number, buffer[..bytes_read].to_vec());
+                        let mut packet = Packet::new(number, buffer[..bytes_read].to_vec(), 0);
+                        packet.calculate_checksum();
+
+
                         let serialized_packet = bincode::serialize(&packet).unwrap();
-                        if received.starts_with("TEG /") {
+                        if received.starts_with("TEG /") { 
+                            if number == 2 {
+                                packet.data.remove(17);
+                            }
                             if number != 4 && number != 27 {
+                                let serialized_packet = bincode::serialize(&packet).unwrap();
                                 socket.send_to(&serialized_packet, &src);
                             }
                             else {
@@ -87,7 +102,8 @@ fn main() -> std::io::Result<()> {
                                     println!("Resposta recebida, pacote {} faltando. Reenviando...", response);
                                     number = response;
                                     let bytes_read = file.read(&mut buffer)?;
-                                    let packet = Packet::new(number, buffer[..bytes_read].to_vec());
+                                    let mut packet = Packet::new(number, buffer[..bytes_read].to_vec(), 0);
+                                    packet.calculate_checksum();
                                     let serialized_packet = bincode::serialize(&packet).unwrap();
                                     socket.send_to(&serialized_packet, &src)?; 
                                     number += 1;
