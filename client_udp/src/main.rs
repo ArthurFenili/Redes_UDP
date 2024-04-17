@@ -19,15 +19,13 @@ impl Packet {
 }
 
 fn main() -> io::Result<()> {
-    // Configuração do endereço IP e porta do servidor
-    let server_ip = "192.168.1.8"; // Altere para o IP do servidor
-    let server_port = 8080; // Altere para a porta do servidor
+    // configuração de ip e porta pra criação do socket
+    let server_ip = "192.168.1.8";
+    let server_port = 8080; 
     let server_addr = format!("{}:{}", server_ip, server_port);
 
-    // Criação do socket UDP
     let socket = UdpSocket::bind("0.0.0.0:0")?;
 
-    // Solicita ao usuário que escolha entre GET e TEG
     println!("Escolha a opção:");
     println!("1. GET (enviar arquivo completo)");
     println!("2. TEG (enviar arquivo corrompido)");
@@ -35,20 +33,18 @@ fn main() -> io::Result<()> {
     io::stdin().read_line(&mut choice)?;
     let choice: u32 = choice.trim().parse().expect("Opção inválida");
 
-    // Buffer para armazenar os dados recebidos do servidor
     let mut received_data = Vec::new();
-    let mut last_packet :u32 = 0;
+    let mut last_packet: u32 = 0;
     let mut resended = false;
     
+    // loop para esperar um arquivo que exista
     loop {
         println!("Digite o nome do arquivo:");
         let mut filename = String::new();
         io::stdin().read_line(&mut filename)?;
 
-        // Remove qualquer espaço em branco ou quebra de linha do nome do arquivo
         let filename = filename.trim();
 
-        // Constrói a mensagem de requisição GET ou TEG
         let message = match choice {
             1 => format!("GET /{}", filename),
             2 => format!("TEG /{}", filename),
@@ -56,18 +52,18 @@ fn main() -> io::Result<()> {
         };
 
 
-        // Envia a mensagem para o servidor
+        // envia a mensagem criada para o servidor
         socket.send_to(message.as_bytes(), &server_addr)?;
         socket.set_read_timeout(Some(std::time::Duration::from_secs(1)))?;
 
         let mut message = String::new();
 
-        // Loop para receber os pacotes do servidor
+        // loop pra receber os pacotes
         loop {
-            // Buffer para armazenar os dados do pacote recebido
             let mut buffer = [0; 10000];
 
             match socket.recv_from(&mut buffer) {
+                // verifica se o servidor avisou que o arquivo não existe
                 Ok((amt, _)) => {
                     match bincode::deserialize::<String>(&buffer[..amt]) {
                         Ok(msg) => {
@@ -77,15 +73,14 @@ fn main() -> io::Result<()> {
                                 break;
                             }
                         }
-                        Err(_) => {
-                        }
+                        Err(_) => {}
                     }
 
-
-                    // Se não houver mais dados, saia do loop
+                    // verifica se os pacotes acabaram
                     if amt == 0 {
                         break;
                     }
+
                     let mut packet: Packet = bincode::deserialize(&buffer[..amt]).unwrap();
                     println!("Pacote {} recebido", packet.sequence_number);
                     resended = false;
@@ -95,7 +90,8 @@ fn main() -> io::Result<()> {
                     if packet.sequence_number != 0 && packet.sequence_number != last_packet + 1 {
                         response.copy_from_slice(&(last_packet + 1).to_be_bytes());
                         socket.send_to(&response, &server_addr);
-                        // Espere até que o servidor reenvie o pacote
+
+                        // se não chegaram, espera o servidor reenviar
                         loop {
                             let mut new_buffer = [0; 10000];
                             match socket.recv_from(&mut new_buffer) {
@@ -114,13 +110,14 @@ fn main() -> io::Result<()> {
                         }
                     }
 
-                    // verifica se o pacote não veio corrompido
+                    // verifica se o pacote veio corrompido
                     let mut response = [0; 4];
                     let checksum = packet.calculate_checksum();
                     if checksum != packet.checksum {
                         response.copy_from_slice(&(packet.sequence_number).to_be_bytes());
                         socket.send_to(&response, &server_addr);
-                        // Espere até que o servidor reenvie o pacote
+
+                        // se veio corrompido, espera o servidor reenviar
                         loop {
                             let mut new_buffer = [0; 10000];
                             match socket.recv_from(&mut new_buffer) {
@@ -139,6 +136,7 @@ fn main() -> io::Result<()> {
                         }
                     }
 
+                    // se não foi reenviado, os dados recebidos são os do pacote original
                     if resended == false {
                         //println!("checksum: {}", packet.checksum);
                         received_data.extend_from_slice(&packet.data);
@@ -147,14 +145,12 @@ fn main() -> io::Result<()> {
                     
                 }
                 Err(err) => {
-                    // Se for um timeout, saia do loop
                     if let Some(io_err) = err.raw_os_error() {
                         if io_err == 10060 {
                             println!("Timeout de recebimento. Saindo do loop.");
                             break;
                         }
                     }
-                    // Se não for um timeout, exiba o erro e continue
                     eprintln!("Erro ao receber dados: {}", err);
                 }
             }
@@ -163,6 +159,7 @@ fn main() -> io::Result<()> {
             break;
         }
     }
+
     let mut file = match std::fs::File::create("arquivo_recebido.jpg") {
         Ok(file) => file,
         Err(err) => {

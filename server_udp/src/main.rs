@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use crc32fast::Hasher;
 
 #[derive(Debug, Serialize, Deserialize)]
+
 struct Packet {    
     sequence_number: u32,
     data: Vec<u8>,
@@ -25,18 +26,17 @@ impl Packet {
 }
 
 fn main() -> std::io::Result<()> {
-    // configuração do endereço de ip e da porta
+    // configuração de ip e porta pra criação do socket
     let ip = "192.168.1.8";
     let port = 8080;
     let addr = format!("{}:{}", ip, port);
 
-    // criação do socket udp
     let socket = UdpSocket::bind(addr)?;
 
     println!("Servidor UDP iniciado. Esperando por mensagens...");
 
     loop {
-        // cria array para armazenar os dados recebidos do client
+        // buffer pra requisição do client
         let mut buf = [0; 1024];
         
         // recebe os dados do socket e guarda no buf, 
@@ -48,32 +48,35 @@ fn main() -> std::io::Result<()> {
         let received = std::str::from_utf8(&buf[..amt]).expect("Erro ao converter bytes para string");
         println!("Mensagem recebida: {}", received);
 
+        // verifica se a requisição é GET ou TEG
         if received.starts_with("GET /") || received.starts_with("TEG /") {
             let filename = received.split_whitespace().nth(1).unwrap_or("").strip_prefix("/").unwrap_or("");
 
-            // cria o buffer do pacote a ser enviado
+            // buffer do pacote a ser enviado
             let mut buffer = [0; 4096];
-            let mut number = 0;
+            let mut number = 0; // numero do pacote
             match File::open(filename) {
                 Ok(mut file) => {
                     loop {
-                        // le x bytes (a quantidade max do buffer) do arquivo file e salva no buffer, salva também, a quantidade de bytes que foi lida na operação na variavel bytes_read
+                        // le x bytes (a quantidade max do buffer) do arquivo file e salva no buffer, salva também a quantidade de bytes que foi lida na operação na variavel bytes_read
                         let bytes_read = file.read(&mut buffer)?;
                         if bytes_read == 0 {
                             socket.set_read_timeout(None);
                             break;
                         }
                         
-                        // cria e envia um pacote com o numero do pacote e os dados
+                        // cria o pacote, calcula checksum e serializa para mandar
                         let mut packet = Packet::new(number, buffer[..bytes_read].to_vec(), 0);
                         packet.calculate_checksum();
-
-
                         let serialized_packet = bincode::serialize(&packet).unwrap();
+
+                        // verifica se a requisição é TEG pra quebrar o pacote
                         if received.starts_with("TEG /") { 
+                            // corrompe o pacote
                             if number == 2 {
                                 packet.data.remove(17);
                             }
+                            // pula o pacote
                             if number != 4 && number != 27 {
                                 let serialized_packet = bincode::serialize(&packet).unwrap();
                                 socket.send_to(&serialized_packet, &src);
@@ -83,7 +86,7 @@ fn main() -> std::io::Result<()> {
                                 continue;
                             }
                         }
-                        else {
+                        else { // se não for TEG envia o pacote normal
                             socket.send_to(&serialized_packet, &src); 
                         }
 
