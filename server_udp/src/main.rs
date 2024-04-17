@@ -125,7 +125,7 @@ fn main() -> std::io::Result<()> {
                 }
                 Err(_) => {
                     let response = "Arquivo não encontrado";
-                    socket.send_to(response.as_bytes(), &src)?; // envia resposta de arquivo não encontrado para o client
+                    socket.send_to(&bincode::serialize(&response).unwrap(), &src)?; // envia resposta de arquivo não encontrado para o client
                 }
             }
         }
