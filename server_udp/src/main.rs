@@ -28,7 +28,7 @@ impl Packet {
 fn main() -> std::io::Result<()> {
     // configuração de ip e porta pra criação do socket
     let ip = "192.168.1.8";
-    let port = 8080;
+    let port = 3002;
     let addr = format!("{}:{}", ip, port);
 
     let socket = UdpSocket::bind(addr)?;
@@ -92,7 +92,7 @@ fn main() -> std::io::Result<()> {
 
                         socket.set_read_timeout(Some(Duration::from_millis(1)))?;
                         let mut client_response = [0; 4];
-                        // espera uma possivel resposta do client, se recebeu significa que um pacote não chegou, então reenvia
+                        // espera uma possivel resposta do client, se recebeu significa que um pacote não chegou ou chegou corrompido, então reenvia
                         // se não recebeu, inicia transferencia do proximo pacote
                         loop {
                             match socket.recv_from(&mut client_response) {

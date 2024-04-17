@@ -21,7 +21,7 @@ impl Packet {
 fn main() -> io::Result<()> {
     // configuração de ip e porta pra criação do socket
     let server_ip = "192.168.1.8";
-    let server_port = 8080; 
+    let server_port = 3002; 
     let server_addr = format!("{}:{}", server_ip, server_port);
 
     let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -62,6 +62,7 @@ fn main() -> io::Result<()> {
         loop {
             let mut buffer = [0; 10000];
 
+            // recebe o pacote do socket e guarda no buffer
             match socket.recv_from(&mut buffer) {
                 // verifica se o servidor avisou que o arquivo não existe
                 Ok((amt, _)) => {
